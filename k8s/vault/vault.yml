@@ -1,0 +1,78 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+data:
+  vault.json: |-
+    {
+      "backend": {
+        "file": {"path": "/vault/file"}
+      },
+      "default_lease_ttl": "160h",
+      "max_lease_ttl": "8760h",
+      "listener": {
+        "tcp": {
+          "address": "0.0.0.0:8200",
+          "tls_cert_file": "/etc/tls/tls.crt",
+          "tls_key_file": "/etc/tls/tls.key"
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+spec:
+  selector:
+    matchLabels:
+      app: vault
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      serviceAccountName: vault-sa
+      containers:
+      - name: vault
+        image: "vault:0.11.2"
+        securityContext:
+          capabilities:
+            add:
+            - IPC_LOCK
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 512Mi
+        args: ["server", "-config", "/etc/vault/vault.json"]
+        ports:
+        - containerPort: 8200
+        readinessProbe:
+          tcpSocket:
+            port: 8200
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+        volumeMounts:
+        - mountPath: /vault/file
+          name: vault-data
+        - mountPath: /etc/tls
+          name: vault-tls
+        - mountPath: /etc/vault
+          name: vault-config
+      volumes:
+      - name: vault-data
+        persistentVolumeClaim:
+          claimName: vault-data-claim
+      - name: vault-tls
+        secret:
+          secretName: vault-tls
+      - name: vault-config
+        configMap:
+          name: vault-config

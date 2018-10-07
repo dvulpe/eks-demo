@@ -1,0 +1,7 @@
+*.tfstate
+.terraform
+.venv
+.idea
+*.pem
+*.csr
+.vault-init.json

@@ -1,0 +1,83 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+spec:
+  selector:
+    matchLabels:
+      app: mongo
+  serviceName: mongo
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      serviceAccountName: mongo-sa
+      securityContext:
+        fsGroup: 999
+      containers:
+      - name: vault-side-kick
+        image: quay.io/dvulpe/vault-sidekick:v0.3.8
+        args:
+        - -ca-cert=/ca/vault-ca.pem
+        - -output=/etc/secrets
+        - -cn=pki:pki/issue/mongo:fmt=bundle,common_name=$(POD_NAME).mongo.default.svc.cluster.local,file=mongo,mode=0640
+        volumeMounts:
+        - name: secrets
+          mountPath: /etc/secrets
+        - name: vault-ca-cert
+          mountPath: /ca
+        env:
+        - name: "VAULT_AUTH_METHOD"
+          value: "kubernetes"
+        - name: VAULT_SIDEKICK_ROLE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: VAULT_ADDR
+          value: https://vault.default.svc.cluster.local:8200
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+      - name: mongo
+        image: mongo:3.4
+        args:
+        - "--sslMode"
+        - "requireSSL"
+        - "--sslAllowConnectionsWithoutCertificates"
+        - "--sslPEMKeyFile"
+        - "/etc/secrets/mongo-bundle.pem"
+        - "--sslCAFile"
+        - "/etc/secrets/mongo-ca.pem"
+        - "--sslDisabledProtocols"
+        - "TLS1_0,TLS1_1"
+        ports:
+        - name: mongod
+          containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: root
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          value: root
+        volumeMounts:
+        - mountPath: /data/db
+          name: mongo-data
+        - name: secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        readinessProbe:
+          tcpSocket:
+            port: 27017
+      volumes:
+      - name: mongo-data
+        persistentVolumeClaim:
+          claimName: mongo-data-claim
+      - name: secrets
+        emptyDir:
+          medium: Memory
+      - name: vault-ca-cert
+        configMap:
+          name: vault-ca-cert

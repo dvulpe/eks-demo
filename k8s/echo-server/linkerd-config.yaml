@@ -1,0 +1,35 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: echo-server-l5d-config
+data:
+  config.yaml: |-
+    admin:
+      ip: 0.0.0.0
+      port: 9990
+    namers:
+    - kind: io.l5d.k8s
+      host: localhost
+      port: 8001
+    telemetry:
+    - kind: io.l5d.prometheus
+    usage:
+      enabled: false
+    routers:
+    - label: ingress
+      protocol: http
+      servers:
+      - port: 4141
+        ip: 0.0.0.0
+        tls:
+          caCertPath: /etc/secrets/servicemesh-ca.pem
+          certPath: /etc/secrets/servicemesh.pem
+          keyPath: /etc/secrets/servicemesh-key.pem
+          requireClientAuth: true
+          protocols:
+          - TLSv1.2
+          ciphers:
+          - ECDHE-RSA-AES128-GCM-SHA256
+      dtab: |
+        /svc/echo-server => /$/inet/127.0.0.1/5678

@@ -1,0 +1,127 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-server
+spec:
+  selector:
+    matchLabels:
+      app: echo-server
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: echo-server
+        servicemesh: linkerd
+    spec:
+      serviceAccountName: echo-server-sa
+      securityContext:
+        fsGroup: 999
+      volumes:
+      - name: secrets
+        emptyDir:
+          medium: Memory
+      - name: vault-ca-cert
+        configMap:
+          name: vault-ca-cert
+      - name: l5d-config
+        configMap:
+          name: "echo-server-l5d-config"
+      containers:
+      - name: vault-side-kick
+        image: quay.io/dvulpe/vault-sidekick:v0.3.8
+        resources:
+          requests:
+            cpu: 1m
+            memory: 64Mi
+          limits:
+            cpu: 10m
+            memory: 192Mi
+        args:
+        - -ca-cert=/ca/vault-ca.pem
+        - -output=/etc/secrets
+        - -cn=pki:pki/issue/servicemesh:fmt=bundle,common_name=echo-server.default.mesh,ip_sans=$(POD_IP),private_key_format=pkcs8,file=servicemesh,mode=0640
+        volumeMounts:
+        - name: secrets
+          mountPath: /etc/secrets
+        - name: vault-ca-cert
+          mountPath: /ca
+        env:
+        - name: VAULT_AUTH_METHOD
+          value: kubernetes
+        - name: VAULT_SIDEKICK_ROLE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.serviceAccountName
+        - name: VAULT_ADDR
+          value: https://vault.default.svc.cluster.local:8200
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+      - name: linkerd
+        image: buoyantio/linkerd:1.5.0
+        securityContext:
+          runAsUser: 1000
+        resources:
+          requests:
+            memory: 128Mi
+          limits:
+            memory: 256Mi
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: JVM_HEAP_MIN
+          value: 32m
+        - name: JVM_HEAP_MAX
+          value: 128m
+        args:
+        - /io.buoyant/linkerd/config/config.yaml
+        ports:
+        - name: admin
+          containerPort: 9990
+        - name: http
+          containerPort: 4141
+        volumeMounts:
+        - name: "l5d-config"
+          mountPath: "/io.buoyant/linkerd/config"
+          readOnly: true
+        - name: secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        readinessProbe:
+          tcpSocket:
+            port: 4141
+      - name: kubectl
+        image: buoyantio/kubectl:v1.8.5
+        args:
+        - "proxy"
+        - "-p"
+        - "8001"
+      - name: echoserver
+        image: hashicorp/http-echo:0.2.3
+        args: ["-text","echo"]
+        readinessProbe:
+          tcpSocket:
+            port: 5678
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 100m
+            memory: 512Mi
